@@ -99,22 +99,13 @@ module Homebrew
       return if ignore_dependencies
 
       all_kegs = kegs_by_rack.values.flatten(1)
-      check_for_dependents(all_kegs, casks:, named_args:)
+      return unless (result = InstalledDependents.find_some_installed_dependents(all_kegs, casks:))
+
+      DependentsMessage.new(*result, named_args:).output
+      nil
     rescue MethodDeprecatedError
       # Silently ignore deprecations when uninstalling.
       nil
-    end
-
-    def self.check_for_dependents(kegs, casks: [], named_args: [])
-      return false unless (result = InstalledDependents.find_some_installed_dependents(kegs, casks:))
-
-      if Homebrew::EnvConfig.developer?
-        DeveloperDependentsMessage.new(*result, named_args:).output
-      else
-        NondeveloperDependentsMessage.new(*result, named_args:).output
-      end
-
-      true
     end
 
     # @api private
@@ -127,38 +118,30 @@ module Homebrew
         @named_args = named_args
       end
 
-      protected
-
-      def sample_command
-        "brew uninstall --ignore-dependencies #{named_args.join(" ")}"
-      end
-
-      def are_required_by_deps
-        "#{(reqs.count == 1) ? "is" : "are"} required by #{deps.to_sentence}, " \
-          "which #{(deps.count == 1) ? "is" : "are"} currently installed"
-      end
-    end
-
-    # @api private
-    class DeveloperDependentsMessage < DependentsMessage
-      def output
-        opoo <<~EOS
-          #{reqs.to_sentence} #{are_required_by_deps}.
-          You can silence this warning with:
-            #{sample_command}
-        EOS
-      end
-    end
-
-    # @api private
-    class NondeveloperDependentsMessage < DependentsMessage
       def output
         ofail <<~EOS
           Refusing to uninstall #{reqs.to_sentence}
-          because #{(reqs.count == 1) ? "it" : "they"} #{are_required_by_deps}.
+          because #{reqs_are_required_by_deps}.
           You can override this and force removal with:
-            #{sample_command}
+            #{sample_uninstall_command}
+          If you need to reinstall #{(reqs.count == 1) ? "it" : "them"}, run:
+            #{sample_reinstall_command}
         EOS
+      end
+
+      private
+
+      def reqs_are_required_by_deps
+        "#{(reqs.count == 1) ? "it is" : "they are"} required by #{deps.to_sentence}, " \
+          "which #{(deps.count == 1) ? "is" : "are"} currently installed"
+      end
+
+      def sample_uninstall_command
+        "brew uninstall --ignore-dependencies #{named_args.join(" ")}"
+      end
+
+      def sample_reinstall_command
+        "brew reinstall #{named_args.join(" ")}"
       end
     end
 
