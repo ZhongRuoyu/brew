@@ -389,6 +389,10 @@ class CurlDownloadStrategy < AbstractFileDownloadStrategy
     super
   end
 
+  PREFERRED_MIRROR_MAPPING = {
+    %r{^(https?)://ftp.gnu.org/} => '\1://ftpmirror.gnu.org/',
+  }.freeze
+
   # Download and cache the file at {#cached_location}.
   #
   # @api public
@@ -399,6 +403,12 @@ class CurlDownloadStrategy < AbstractFileDownloadStrategy
     download_lock.lock
 
     urls = [url, *mirrors]
+    if (mapping = PREFERRED_MIRROR_MAPPING.find { |pattern, _| url.match?(pattern) })
+      preferred_mirror = url.sub(*mapping)
+      odebug "Prioritizing preferred mirror #{preferred_mirror} for #{url}"
+      urls.delete_if { |x| x == url || x == preferred_mirror }
+      urls.prepend preferred_mirror, url
+    end
 
     begin
       url = urls.shift
