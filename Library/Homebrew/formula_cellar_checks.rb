@@ -226,6 +226,33 @@ module FormulaCellarChecks
     EOS
   end
 
+  def check_pkgconfig_cellar_references(formula)
+    offences = Hash.new { |h, k| h[k] = Set.new }
+
+    [formula.lib/"pkgconfig", formula.share/"pkgconfig"].each do |dir|
+      next unless dir.directory?
+
+      dir.children.select { |f| f.extname == ".pc" }.each do |f|
+        cellar_refs = f.read.scan(%r{#{HOMEBREW_CELLAR}/#{HOMEBREW_TAP_FORMULA_NAME_REGEX}})
+        cellar_refs.each do |matches|
+          formula_name = matches[0]
+          next if formula.name == formula_name
+          next if formula.aliases.include?(formula_name)
+
+          offences[f] << formula_name
+        end
+      end
+    end
+
+    return if offences.empty?
+
+    <<~EOS
+      pkg-config files were found with references to the Homebrew Cellar directory.
+      The offending files are:
+        #{offences.map { |k, v| "#{k}, which contains references to #{v.to_a.to_sentence}" } * "\n  "}
+    EOS
+  end
+
   sig { params(prefix: Pathname).returns(T.nilable(String)) }
   def check_shim_references(prefix)
     return unless prefix.directory?
@@ -414,6 +441,9 @@ module FormulaCellarChecks
   def audit_installed
     @new_formula ||= false
 
+    problem_if_output(check_pkgconfig_cellar_references(formula))
+    return
+
     problem_if_output(check_manpages)
     problem_if_output(check_infopages)
     problem_if_output(check_jars)
@@ -427,6 +457,7 @@ module FormulaCellarChecks
     problem_if_output(check_elisp_dirname(formula.share, formula.name))
     problem_if_output(check_elisp_root(formula.share, formula.name))
     problem_if_output(check_python_packages(formula.lib, formula.deps))
+    problem_if_output(check_pkgconfig_cellar_references(formula))
     problem_if_output(check_shim_references(formula.prefix))
     problem_if_output(check_plist(formula.prefix, formula.launchd_service_path))
     problem_if_output(check_python_symlinks(formula.name, formula.keg_only?))

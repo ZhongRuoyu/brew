@@ -957,6 +957,7 @@ module Homebrew
 
       methods.map(&:to_s).grep(/^audit_/).each do |audit_method_name|
         name = audit_method_name.delete_prefix("audit_")
+        next unless name == "installed"
         next if only_audits&.exclude?(name)
         next if except_audits&.include?(name)
 

@@ -177,6 +177,22 @@ class Cleaner
     end
   end
 
+  sig { void }
+  def rewrite_pkgconfig_files
+    basepath = @formula.prefix.realpath
+    [basepath/"lib/pkgconfig", basepath/"share/pkgconfig"].each do |dir|
+      next unless dir.directory?
+      next if @formula.skip_clean?(dir)
+      next if @formula.skip_clean?(dir.parent)
+
+      dir.children.select { |f| f.extname == ".pc" }.each do |f|
+        next if @formula.skip_clean?(f)
+
+        Utils::Inreplace.inreplace f, basepath, @formula.prefix, false
+      end
+    end
+  end
+
   # Remove non-reproducible pip direct_url.json which records the /tmp build directory.
   # Remove RECORD files to prevent changes to the installed Python package.
   # Modify INSTALLER to provide information that files are managed by brew.
