@@ -45,13 +45,27 @@ module Superenv
 
   def homebrew_extra_isystem_paths
     paths = []
-    # Add paths for GCC headers when building against glibc@2.13 because we have to use -nostdinc.
-    if deps.any? { |d| d.name == "glibc@2.13" }
+    # Add paths for GCC headers when building against glibc@2.13 or glibc@2.17
+    # because we have to use -nostdinc.
+    if deps.any? { |d| d.name == "glibc@2.13" || d.name == "glibc@2.17" }
       gcc_include_dir = Utils.safe_popen_read(cc, "--print-file-name=include").chomp
       gcc_include_fixed_dir = Utils.safe_popen_read(cc, "--print-file-name=include-fixed").chomp
       paths << gcc_include_dir << gcc_include_fixed_dir
     end
     paths
+  end
+
+  sig { returns(String) }
+  def determine_optflags
+    if effective_arch == :armv8 &&
+       compiler.match?(GNU_GCC_REGEXP) &&
+       DevelopmentTools.gcc_version(compiler.to_s) >= "9.3.1"
+      # Out-of-line atomics are not supported out-of-the-box on all systems.
+      # https://learn.arm.com/learning-paths/servers-and-cloud-computing/lse/intro/
+      "#{generic_determine_optflags} -mno-outline-atomics"
+    else
+      generic_determine_optflags
+    end
   end
 
   def determine_rpath_paths(formula)

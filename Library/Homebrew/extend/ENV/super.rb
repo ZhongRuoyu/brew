@@ -306,6 +306,7 @@ module Superenv
     odebug "Building a bottle for custom architecture (#{effective_arch})..."
     Hardware::CPU.arch_flag(effective_arch)
   end
+  alias generic_determine_optflags determine_optflags
 
   sig { returns(String) }
   def determine_cccfg
