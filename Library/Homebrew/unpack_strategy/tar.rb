@@ -63,3 +63,5 @@ module UnpackStrategy
     end
   end
 end
+
+require "extend/os/unpack_strategy/tar"

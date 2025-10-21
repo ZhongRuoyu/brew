@@ -209,6 +209,9 @@ module Homebrew::EnvConfig
     def install_badge; end
 
     sig { returns(T::Boolean) }
+    def install_compressed?; end
+
+    sig { returns(T::Boolean) }
     def livecheck_autobump?; end
 
     sig { returns(String) }

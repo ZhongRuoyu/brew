@@ -342,6 +342,11 @@ module Homebrew
         default_text: 'The "Beer Mug" emoji.',
         default:      "🍺",
       },
+      HOMEBREW_INSTALL_COMPRESSED:               {
+        description: "macOS only: If set, Homebrew will use APFS/HFS+ transparent compression when " \
+                     "installing formulae. This can significantly reduce storage usage for installed packages.",
+        boolean:     true,
+      },
       HOMEBREW_LIVECHECK_AUTOBUMP:               {
         description: "If set, `brew livecheck` will include data for packages that are autobumped by BrewTestBot.",
         boolean:     true,
