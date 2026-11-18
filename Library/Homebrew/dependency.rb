@@ -223,49 +223,24 @@ class Dependency
     def expand(dependent, deps = dependent.deps, cache_key: nil, cache_timestamp: nil, formula_cache: nil, &block)
       raise ArgumentError, "formula_cache requires cache_key" if formula_cache && cache_key.blank?
 
-      # Keep track dependencies to avoid infinite cyclic dependency recursion.
-      @expand_stack ||= T.let([], T.nilable(T::Array[T.any(String, Symbol)]))
-      @expand_stack.push dependent.name
+      expand_recursive(dependent, deps, cache_key:, cache_timestamp:, formula_cache:, &block)
+    end
 
-      begin
-        if cache_key.present? && (entry = cache(cache_key, cache_timestamp:)[cache_id dependent])
-          return entry.dup
-        end
-
-        expanded_deps = []
-
-        deps.each do |dep|
-          next if dependent.name == dep.name
-
-          case action(dependent, dep, &block)
-          when Dependable::PRUNE
-            next
-          when Dependable::SKIP
-            next if @expand_stack.include? dep.name
-
-            expanded_deps.concat(expand(formula_for_dependency(dep, formula_cache),
-                                        cache_key:, cache_timestamp:, formula_cache:,
-                                        &block))
-          when Dependable::KEEP_BUT_PRUNE_RECURSIVE_DEPS
-            expanded_deps << dep
-          else
-            next if @expand_stack.include? dep.name
-
-            dep_formula = formula_for_dependency(dep, formula_cache)
-            expanded_deps.concat(expand(dep_formula, cache_key:, cache_timestamp:, formula_cache:, &block))
-
-            # Fixes names for renamed/aliased formulae.
-            dep = dep.dup_with_formula_name(dep_formula)
-            expanded_deps << dep
-          end
-        end
-
-        expanded_deps = merge_repeats(expanded_deps)
-        cache(cache_key, cache_timestamp:)[cache_id dependent] = expanded_deps.dup if cache_key.present?
-        expanded_deps
-      ensure
-        @expand_stack.pop
-      end
+    # Collect dependencies for one installer pass. Only the root needs a merged
+    # list, but each incoming edge still contributes its own tags and options.
+    T::Sig::WithoutRuntime.sig {
+      params(
+        formula: Formula,
+        block:   T.proc.params(arg0: T.any(Formula, CaskDependent), arg1: Dependency).returns(T.nilable(Symbol)),
+      ).returns(T::Array[Dependency])
+    }
+    def expand_for_install(formula, &block)
+      root_deps = T.let([], T::Array[Dependency])
+      cache_key = "FormulaInstaller-#{root_deps.object_id}"
+      expand_recursive(formula, root_deps:, cache_key:, formula_cache: {}, &block)
+      merge_repeats(root_deps)
+    ensure
+      @cache&.dig(:not_timestamped)&.delete(cache_key)
     end
 
     # CaskDependent may not be initialized yet, so we don't use a runtime sig
@@ -333,6 +308,60 @@ class Dependency
     end
 
     private
+
+    T::Sig::WithoutRuntime.sig {
+      params(
+        dependent:       T.any(Formula, CaskDependent),
+        deps:            T::Array[Dependency],
+        cache_key:       T.nilable(String),
+        formula_cache:   T.nilable(T::Hash[Dependency, Formula]),
+        cache_timestamp: T.nilable(Time),
+        root_deps:       T.nilable(T::Array[Dependency]),
+        block:           T.nilable(T.proc.params(arg0: T.any(Formula, CaskDependent),
+                                                 arg1: Dependency).returns(T.nilable(Symbol))),
+      ).returns(T::Array[Dependency])
+    }
+    def expand_recursive(dependent, deps = dependent.deps, cache_key:, formula_cache:, cache_timestamp: nil,
+                         root_deps: nil, &block)
+      @expand_stack ||= T.let([], T.nilable(T::Array[T.any(String, Symbol)]))
+      @expand_stack.push dependent.name
+
+      begin
+        if cache_key.present? && (entry = cache(cache_key, cache_timestamp:)[cache_id dependent])
+          return entry.dup
+        end
+
+        expanded_deps = root_deps || []
+        deps.each do |dep|
+          next if dependent.name == dep.name
+
+          decision = action(dependent, dep, &block)
+          case decision
+          when Dependable::PRUNE
+            next
+          when Dependable::KEEP_BUT_PRUNE_RECURSIVE_DEPS
+            expanded_deps << dep
+          else
+            next if @expand_stack.include? dep.name
+
+            dep_formula = formula_for_dependency(dep, formula_cache)
+            expanded_deps.concat(expand_recursive(dep_formula, cache_key:, formula_cache:, cache_timestamp:,
+                                                  root_deps:, &block))
+
+            # Fix names for renamed or aliased formulae.
+            expanded_deps << dep.dup_with_formula_name(dep_formula) if decision != Dependable::SKIP
+          end
+        end
+
+        # Once the edges are in the root list, revisiting this subtree adds
+        # nothing. Build option changes invalidate this entry as usual.
+        expanded_deps = root_deps ? [] : merge_repeats(expanded_deps)
+        cache(cache_key, cache_timestamp:)[cache_id dependent] = expanded_deps.dup if cache_key.present?
+        expanded_deps
+      ensure
+        @expand_stack.pop
+      end
+    end
 
     # CaskDependent may not be initialized yet, so we don't use a runtime sig
     T::Sig::WithoutRuntime.sig { params(dependent: T.any(Formula, CaskDependent)).returns(String) }

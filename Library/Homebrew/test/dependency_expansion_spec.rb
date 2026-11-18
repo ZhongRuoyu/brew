@@ -52,6 +52,43 @@ RSpec.describe Dependency do
     end
   end
 
+  describe "::expand_for_install" do
+    it "merges the filtered edges once in dependency order" do
+      shared = build_dep("shared", [:build, "one"], [qux])
+      skip = build_dep("skip", [], [shared, baz])
+      keep = build_dep("keep", [], [bar])
+      root = instance_double(Formula, name: "root", full_name: "root",
+                             deps: [skip, keep, build_dep("shared", ["two"], [qux])])
+      expect(described_class).to receive(:merge_repeats).once.and_call_original
+
+      result = described_class.expand_for_install(root) do |_, dep|
+        case dep.name
+        when "skip" then Dependable::SKIP
+        when "baz" then Dependable::PRUNE
+        when "keep" then Dependable::KEEP_BUT_PRUNE_RECURSIVE_DEPS
+        end
+      end
+
+      expect(result).to eq([qux, described_class.new("shared", %w[one two]), keep])
+    end
+
+    it "revisits shared dependencies after the expansion cache is invalidated" do
+      shared = build_dep("shared", [], [foo])
+      root = instance_double(Formula, name: "root", full_name: "root",
+                             deps: [shared, build_dep("second", [], [shared])])
+      keep_foo = T.let(false, T::Boolean)
+      result = described_class.expand_for_install(root) do |_, dep|
+        if dep.name == "second"
+          keep_foo = true
+          described_class.clear_cache
+        end
+        Dependable::PRUNE if dep.name == "foo" && !keep_foo
+      end
+
+      expect(result.map(&:name)).to eq(%w[shared foo second])
+    end
+  end
+
   it "skips optionals by default" do
     deps = [build_dep(:foo, [:optional]), bar, baz, qux]
     f = instance_double(Formula, deps:, build: instance_double(BuildOptions, with?: false), name: "f")

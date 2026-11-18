@@ -792,14 +792,11 @@ on_request: installed_on_request?, options:)
     ).returns(T::Array[Dependency])
   }
   def expand_dependencies_for_formula_once(formula, unkeepable_dependencies, kept_dependencies)
-    # Cache for this expansion only. FormulaInstaller has a lot of inputs which can alter expansion.
-    cache_key = "FormulaInstaller-#{formula.full_name}-#{Time.now.to_f}"
-    formula_cache = T.let({}, T::Hash[Dependency, Formula])
     satisfied_cache = T.let(
       {},
       T::Hash[T::Array[T.nilable(T.any(Dependency, String, Integer))], T::Boolean],
     )
-    Dependency.expand(formula, cache_key:, formula_cache:) do |dependent, dep|
+    Dependency.expand_for_install(formula) do |dependent, dep|
       dependent = T.cast(dependent, Formula)
       build = effective_build_options_for(dependent)
 
