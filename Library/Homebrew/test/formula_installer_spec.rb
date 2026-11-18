@@ -2675,14 +2675,71 @@ RSpec.describe FormulaInstaller do
   end
 
   describe "#fetch_dependencies" do
+    it "queues sibling bottles before resolving a child's newer dependency revision" do
+      ENV["HOMEBREW_DOWNLOAD_CONCURRENCY"] = "4"
+      library, child, sibling, parent = %w[revision-lib child sibling parent].map do |name|
+        f = formula(name) do
+          url "https://example.com/#{name}-1.0.tar.gz"
+          revision 2 if name == "revision-lib"
+          depends_on "revision-lib" if name == "child"
+          if name == "parent"
+            depends_on "child"
+            depends_on "sibling"
+          end
+          bottle do
+            sha256 cellar: :any_skip_relocation, all: TESTBALL_SHA256
+          end
+        end
+        stub_formula_loader(f)
+        allow(Formulary).to receive(:resolve).with(name).and_return(f)
+        f
+      end
+      installed = library.rack/"1.0_1"
+      installed.mkpath
+      library.opt_prefix.parent.mkpath
+      library.opt_prefix.make_symlink(installed)
+      runtime_dep = { "full_name" => library.name, "version" => "1.0", "revision" => 1 }
+      allow(parent.bottle).to receive(:tab_attributes).and_return({ "runtime_dependencies" => [runtime_dep] })
+
+      queue = Homebrew::DownloadQueue.new
+      child_tab = {}
+      allow(child.bottle).to receive(:tab_attributes).and_return(child_tab)
+      queued = []
+      allow(queue).to receive(:enqueue) do |item, **|
+        if item.is_a?(Resource::BottleManifest)
+          queued << "#{item.bottle.name}-manifest"
+          queue.downloads[item] = Concurrent::Promises.delay do
+            child_tab["runtime_dependencies"] = [runtime_dep.merge("revision" => 2)] if item.bottle.name == child.name
+          end
+        else
+          queued << item.name
+        end
+      end
+      child_lib = child.deps.fetch(0)
+      allow(child_lib).to receive(:satisfied?).and_call_original
+      expect(child_lib).to receive(:satisfied?).with(hash_including(minimum_revision: 2)).and_call_original
+
+      installer = described_class.new(parent, download_queue: queue)
+      installer.prelude
+      expect(installer.compute_dependencies.map(&:name)).to eq([child.name, sibling.name])
+      installer.enqueue_fetch
+      expect(queued).to eq(%w[
+        parent-manifest parent child-manifest sibling-manifest child sibling revision-lib-manifest revision-lib
+      ])
+    ensure
+      queue&.shutdown
+    end
+
     it "lists the dependencies' bottle attestations before fetching them" do
       dependency = formula("dependency") { url "foo-1.0" }
       stub_formula_loader(dependency)
       installer = described_class.new(formula("dependent") { url "foo-1.0" })
-      allow(installer).to receive(:compute_dependencies).and_return([Dependency.new("dependency")])
       calls = []
       allow(Homebrew::Attestation).to receive(:prefetch) { |formulae| calls << [:prefetch, formulae] }
-      allow(installer).to receive(:fetch_dependency) { |dep| calls << [:fetch_dependency, dep.name] }
+      child = instance_double(described_class, prelude: nil)
+      allow(installer).to receive_messages(compute_dependencies:       [Dependency.new("dependency")],
+                                           dependency_fetch_installer: child)
+      allow(child).to receive(:enqueue_fetch) { calls << [:fetch_dependency, dependency.name] }
 
       installer.fetch_dependencies
 

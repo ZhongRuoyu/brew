@@ -933,11 +933,12 @@ on_request: installed_on_request?, options:)
     @show_header = true unless deps.empty?
   end
 
-  sig { params(dep: Dependency).void }
-  def fetch_dependency(dep)
-    df = dep.to_formula
-    fi = FormulaInstaller.new(
-      df,
+  # Build a dependency installer that submits downloads to the parent's queue.
+  sig { params(dep: Dependency).returns(FormulaInstaller) }
+  def dependency_fetch_installer(dep)
+    FormulaInstaller.new(
+      dep.to_formula,
+      download_queue:             download_queue,
       force_bottle:               false,
       # When fetching we don't need to recurse the dependency tree as it's already
       # been done for us in `compute_dependencies` and there's no requirement to
@@ -953,9 +954,6 @@ on_request: installed_on_request?, options:)
       quiet:                      quiet?,
       verbose:                    verbose?,
     )
-    fi.download_queue = download_queue
-    fi.prelude
-    fi.enqueue_fetch
   end
 
   sig { params(dep: Dependency, dep_formula: Formula).void }
@@ -1581,7 +1579,19 @@ on_request: installed_on_request?, options:)
 
     # Covers the fetch paths that bypass `Install.fetch_formulae`'s bulk listing.
     Homebrew::Attestation.prefetch(deps.map(&:to_formula))
-    deps.each { fetch_dependency(it) }
+    installers = deps.lazy.map { dependency_fetch_installer(it) }
+    if pour_bottle? && Homebrew::EnvConfig.download_concurrency > 1 && deps.none?(&:implicit?)
+      installers = installers.to_a
+      # Submit manifests first so queued archives cannot delay dependency resolution.
+      installers.each { |fi| fi.prelude_fetch(metadata_only: true) }
+      installers.select(&:pour_bottle?).each(&:prelude_fetch)
+      download_queue.wait_for_bottle_manifests
+    end
+
+    installers.each do |fi|
+      fi.prelude
+      fi.enqueue_fetch
+    end
   end
 
   sig { returns(T.nilable(Formula)) }

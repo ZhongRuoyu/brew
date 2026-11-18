@@ -121,6 +121,15 @@ module Homebrew
       end
     end
 
+    # Wait for dependency metadata without consuming the futures. The final
+    # fetch still reports failures and handles bad checksums as usual.
+    sig { void }
+    def wait_for_bottle_manifests
+      downloads.each do |downloadable, future|
+        future.wait if downloadable.is_a?(Resource::BottleManifest)
+      end
+    end
+
     # Waits for and reports queued downloads. With `only:`, limits that to
     # downloadables of the given class, leaving the rest enqueued and
     # unreported for a later fetch, e.g. so dependency resolution can wait
